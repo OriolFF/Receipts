@@ -5,9 +5,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import android.util.Log
 import androidx.lifecycle.viewModelScope
-import com.uriolus.recipes.core.common.Resource
+import arrow.core.Either
 import com.uriolus.recipes.core.data.remote.dto.TokenResponse
 import com.uriolus.recipes.core.data.preferences.TokenStorageManager
+import com.uriolus.recipes.core.model.AppError
 import com.uriolus.recipes.feature.auth.domain.use_case.LoginUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,24 +50,23 @@ class LoginViewModel @Inject constructor(
     fun login() {
         viewModelScope.launch {
             _loginState.value = LoginState(isLoading = true)
-            when (val result = loginUseCase(_username.value, _password.value)) {
-                is Resource.Success -> {
-                    result.data?.accessToken?.let {
-                        tokenStorageManager.saveAccessToken(it)
+            loginUseCase(_username.value, _password.value).fold(
+                ifLeft = { appError ->
+                    val errorMessage = when (appError) {
+                        is AppError.ValidationError -> appError.message
+                        // Consider adding more specific AppError types here if needed
+                        else -> appError.toString() // Fallback for other error types
                     }
-                    _loginState.value = LoginState(loginSuccess = true, tokenResponse = result.data)
+                    Log.e("LoginViewModel", "Login failed: $errorMessage (Details: $appError)")
+                    _loginState.value = LoginState(isLoading = false, error = errorMessage)
+                },
+                ifRight = { tokenResponse ->
+                    // Assuming tokenResponse.accessToken is a non-null String as per TokenResponse definition
+                    tokenStorageManager.saveAccessToken(tokenResponse.accessToken)
+                    _loginState.value = LoginState(isLoading = false, loginSuccess = true, tokenResponse = tokenResponse)
                     // Navigation is handled by the LoginScreen's onLoginSuccess callback
                 }
-                is Resource.Error -> {
-                    Log.e("LoginViewModel", "Login failed: ${result.message}")
-                    _loginState.value = LoginState(error = result.message)
-                }
-                is Resource.Loading -> {
-                    // This case might not be directly emitted by the current LoginUseCase setup
-                    // but is good practice to handle if the use case changes.
-                    _loginState.value = LoginState(isLoading = true)
-                }
-            }
+            )
         }
     }
 }
